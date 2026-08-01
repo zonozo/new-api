@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -148,6 +149,60 @@ func TestRelayErrorHandlerKeepsInvalidJSONBodyInDebugLog(t *testing.T) {
 	require.NotNil(t, newAPIError)
 	require.NotContains(t, logBuffer.String(), "[truncated")
 	require.Contains(t, logBuffer.String(), body)
+}
+
+func TestUserFacingErrorHidesUpstreamDetails(t *testing.T) {
+	tests := []struct {
+		name       string
+		rawStatus  int
+		wantStatus int
+		wantCode   types.ErrorCode
+		wantText   string
+	}{
+		{name: "invalid key", rawStatus: http.StatusUnauthorized, wantStatus: http.StatusUnauthorized, wantCode: "KEY_INVALID", wantText: "Key invalid"},
+		{name: "upstream quota", rawStatus: http.StatusPaymentRequired, wantStatus: http.StatusPaymentRequired, wantCode: "RESOURCE_EXHAUSTED", wantText: "Insufficient resources"},
+		{name: "rate limited", rawStatus: http.StatusTooManyRequests, wantStatus: http.StatusTooManyRequests, wantCode: "RATE_LIMITED", wantText: "Too many requests, please try again later"},
+		{name: "server failure", rawStatus: http.StatusBadGateway, wantStatus: http.StatusBadGateway, wantCode: "SERVICE_UNAVAILABLE", wantText: "Upstream service failure, please try again later"},
+		{name: "unknown upstream status", rawStatus: http.StatusForbidden, wantStatus: http.StatusInternalServerError, wantCode: "INTERNAL_ERROR", wantText: "Internal error, please try again later"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			raw := types.WithOpenAIError(types.OpenAIError{
+				Message: "token quota is not enough: token remain quota: secret, url: http://internal",
+				Type:    "upstream_error",
+				Code:    "provider_internal",
+			}, tt.rawStatus)
+
+			safe := UserFacingError(raw)
+			require.Equal(t, tt.wantStatus, safe.StatusCode)
+			safeResponse := safe.ToOpenAIError()
+			require.Equal(t, tt.wantCode, safe.GetErrorCode())
+			require.Equal(t, tt.wantText, safeResponse.Message)
+			require.NotContains(t, safeResponse.Message, "token quota")
+			require.NotContains(t, safeResponse.Message, "internal")
+		})
+	}
+}
+
+func TestUserFacingErrorMapsLocalQuotaFailure(t *testing.T) {
+	raw := types.NewErrorWithStatusCode(
+		errors.New("token quota is not enough, token remain quota: secret, need quota: secret"),
+		types.ErrorCodePreConsumeTokenQuotaFailed,
+		http.StatusForbidden,
+	)
+
+	safe := UserFacingError(raw)
+	require.Equal(t, http.StatusForbidden, safe.StatusCode)
+	require.Equal(t, types.ErrorCode("RESOURCE_EXHAUSTED"), safe.GetErrorCode())
+	require.Equal(t, "Insufficient resources", safe.ToOpenAIError().Message)
+	require.Contains(t, raw.Error(), "token remain quota")
+}
+
+func TestUserFacingErrorPreservesClientValidation(t *testing.T) {
+	raw := types.NewError(errors.New("invalid field: max_tokens"), types.ErrorCodeInvalidRequest)
+
+	require.Same(t, raw, UserFacingError(raw))
 }
 
 func withDebugEnabled(t *testing.T, enabled bool) {

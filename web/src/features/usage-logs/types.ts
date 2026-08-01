@@ -113,6 +113,11 @@ export interface ToolSurchargeItem {
 }
 
 export interface LogOtherData {
+  // Error fields. Non-admin responses contain only standardized values;
+  // privileged log responses retain the original upstream values.
+  error_type?: string
+  error_code?: string
+  status_code?: number
   admin_info?: {
     is_multi_key?: boolean
     multi_key_index?: number

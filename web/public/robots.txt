@@ -1,0 +1,27 @@
+User-agent: *
+Allow: /
+
+Disallow: /api/
+Disallow: /v1/
+Disallow: /oauth/
+Disallow: /setup/
+Disallow: /sign-in
+Disallow: /sign-up
+Disallow: /forgot-password
+Disallow: /reset
+Disallow: /dashboard/
+Disallow: /channels/
+Disallow: /chat/
+Disallow: /keys/
+Disallow: /models/
+Disallow: /playground/
+Disallow: /profile/
+Disallow: /redemption-codes/
+Disallow: /subscriptions/
+Disallow: /system-info/
+Disallow: /system-settings/
+Disallow: /usage-logs/
+Disallow: /users/
+Disallow: /wallet/
+
+Sitemap: https://caerov.com/sitemap.xml

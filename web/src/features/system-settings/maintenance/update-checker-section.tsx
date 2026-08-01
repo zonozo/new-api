@@ -41,6 +41,10 @@ type UpdateCheckerSectionProps = {
   startTime?: number | null
 }
 
+const UPDATE_REPOSITORY_URL = 'https://github.com/zonozo/new-api'
+const LATEST_RELEASE_API_URL =
+  'https://api.github.com/repos/zonozo/new-api/releases/latest'
+
 export function UpdateCheckerSection({
   currentVersion,
   startTime,
@@ -56,15 +60,12 @@ export function UpdateCheckerSection({
   const handleCheckUpdates = async () => {
     setChecking(true)
     try {
-      const response = await fetch(
-        'https://api.github.com/repos/Calcium-Ion/new-api/releases/latest',
-        {
-          headers: {
-            Accept: 'application/vnd.github+json',
-            'User-Agent': 'new-api-dashboard',
-          },
-        }
-      )
+      const response = await fetch(LATEST_RELEASE_API_URL, {
+        headers: {
+          Accept: 'application/vnd.github+json',
+          'User-Agent': 'new-api-dashboard',
+        },
+      })
 
       if (!response.ok) {
         throw new Error(t('Failed to contact GitHub releases API'))
@@ -122,16 +123,31 @@ export function UpdateCheckerSection({
             </div>
           </div>
 
-          <Button onClick={handleCheckUpdates} disabled={checking}>
-            {checking ? (
-              t('Checking updates...')
-            ) : (
-              <>
-                <RefreshCcwIcon className='me-2 h-4 w-4' />
-                {t('Check for updates')}
-              </>
-            )}
-          </Button>
+          <div className='flex flex-wrap gap-2'>
+            <Button onClick={handleCheckUpdates} disabled={checking}>
+              {checking ? (
+                t('Checking updates...')
+              ) : (
+                <>
+                  <RefreshCcwIcon className='me-2 h-4 w-4' />
+                  {t('Check for updates')}
+                </>
+              )}
+            </Button>
+            <Button
+              variant='secondary'
+              render={
+                <a
+                  href={UPDATE_REPOSITORY_URL}
+                  target='_blank'
+                  rel='noreferrer'
+                />
+              }
+            >
+              <ExternalLinkIcon className='me-2 h-4 w-4' />
+              {t('GitHub')}
+            </Button>
+          </div>
         </div>
       </SettingsSection>
 

@@ -49,6 +49,7 @@ import {
   parseLogOther,
   isViolationFeeLog,
   renderAuditContent,
+  renderLogContent,
 } from '../../lib/format'
 import {
   isDisplayableLogType,
@@ -730,6 +731,7 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
         const [dialogOpen, setDialogOpen] = useState(false)
         const log = row.original
         const other = parseLogOther(log.other)
+        const content = renderLogContent(log, other, t)
 
         const segments = buildDetailSegments(log, other, t, isAdmin)
         const primary = segments[0]
@@ -757,10 +759,10 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
               )}
             </span>
           )
-        } else if (log.content) {
+        } else if (content) {
           detailPreview = (
             <span className='text-muted-foreground truncate group-hover:underline'>
-              {log.content}
+              {content}
             </span>
           )
         }

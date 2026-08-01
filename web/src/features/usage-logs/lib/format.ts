@@ -168,6 +168,21 @@ export function parseLogOther(other: string): LogOtherData | null {
 }
 
 /**
+ * Localize only backend-standardized user errors. Privileged logs retain their
+ * original upstream error type and therefore remain byte-for-byte readable.
+ */
+export function renderLogContent(
+  log: UsageLog,
+  other: LogOtherData | null | undefined,
+  t: (key: string) => string
+): string {
+  if (log.type === 5 && other?.error_type === 'standard_error') {
+    return t(log.content)
+  }
+  return log.content
+}
+
+/**
  * Get time color based on duration (in seconds)
  */
 export function getTimeColor(

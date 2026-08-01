@@ -75,6 +75,7 @@ import {
   getFirstResponseTimeColor,
   getResponseTimeColor,
   renderAuditContent,
+  renderLogContent,
 } from '../../lib/format'
 import {
   getLogTypeConfig,
@@ -479,9 +480,15 @@ interface DetailsDialogProps {
 export function DetailsDialog(props: DetailsDialogProps) {
   const { t } = useTranslation()
   const { copiedText, copyToClipboard } = useCopyToClipboard({ notify: false })
-  const details = props.log.content ?? ''
   const other = parseLogOther(props.log.other)
+  const details = renderLogContent(props.log, other, t)
   const typeConfig = getLogTypeConfig(props.log.type)
+  const standardErrorStatusCode =
+    props.log.type === 5 &&
+    other?.error_type === 'standard_error' &&
+    typeof other.status_code === 'number'
+      ? other.status_code
+      : null
 
   const isViolation = isViolationFeeLog(other)
   const isRefund = props.log.type === 6
@@ -641,6 +648,13 @@ export function DetailsDialog(props: DetailsDialogProps) {
       <div className='w-full max-w-full min-w-0 space-y-2.5 overflow-x-hidden py-1 sm:space-y-3'>
         {/* Overview section - key identifiers */}
         <div className='min-w-0 space-y-1'>
+          {standardErrorStatusCode != null && (
+            <DetailRow
+              label={t('Status Code')}
+              value={String(standardErrorStatusCode)}
+              mono
+            />
+          )}
           {props.log.request_id && (
             <DetailRow
               label={t('Request ID')}

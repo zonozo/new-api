@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -92,6 +94,20 @@ const (
 	LogTypeLogin   = 7
 )
 
+const (
+	standardErrorType                   = "standard_error"
+	standardErrorCodeKeyInvalid         = "KEY_INVALID"
+	standardErrorCodeResourceExhausted  = "RESOURCE_EXHAUSTED"
+	standardErrorCodeRateLimited        = "RATE_LIMITED"
+	standardErrorCodeServiceUnavailable = "SERVICE_UNAVAILABLE"
+	standardErrorCodeInternal           = "INTERNAL_ERROR"
+	standardErrorMessageKeyInvalid      = "Key invalid"
+	standardErrorMessageResource        = "Insufficient resources"
+	standardErrorMessageRateLimited     = "Too many requests, please try again later"
+	standardErrorMessageService         = "Upstream service failure, please try again later"
+	standardErrorMessageInternal        = "Internal error, please try again later"
+)
+
 func ensureLogRequestId(log *Log) {
 	if log != nil && log.RequestId == "" {
 		log.RequestId = common.NewRequestId()
@@ -113,7 +129,84 @@ func assignDisplayLogIds(logs []*Log, startIdx int) {
 	}
 }
 
-func formatUserLogs(logs []*Log, startIdx int) {
+func standardizeUserErrorLog(log *Log, otherMap map[string]interface{}) {
+	statusCode := 0
+	switch value := otherMap["status_code"].(type) {
+	case float64:
+		if value >= 100 && value <= 599 && value == float64(int(value)) {
+			statusCode = int(value)
+		}
+	case int:
+		statusCode = value
+	case string:
+		statusCode, _ = strconv.Atoi(value)
+	}
+
+	userStatusCode := http.StatusInternalServerError
+	userErrorCode := standardErrorCodeInternal
+	userMessage := standardErrorMessageInternal
+	switch {
+	case isResourceExhaustedErrorLog(otherMap, log.Content):
+		// Local quota failures use 403 while upstream quota exhaustion uses 402.
+		// Both are represented by the same safe user-facing error class.
+		userStatusCode = statusCode
+		if userStatusCode < 100 || userStatusCode > 599 {
+			userStatusCode = http.StatusForbidden
+		}
+		userErrorCode = standardErrorCodeResourceExhausted
+		userMessage = standardErrorMessageResource
+	case statusCode == http.StatusUnauthorized:
+		userStatusCode = http.StatusUnauthorized
+		userErrorCode = standardErrorCodeKeyInvalid
+		userMessage = standardErrorMessageKeyInvalid
+	case statusCode == http.StatusPaymentRequired:
+		userStatusCode = http.StatusPaymentRequired
+		userErrorCode = standardErrorCodeResourceExhausted
+		userMessage = standardErrorMessageResource
+	case statusCode == http.StatusTooManyRequests:
+		userStatusCode = http.StatusTooManyRequests
+		userErrorCode = standardErrorCodeRateLimited
+		userMessage = standardErrorMessageRateLimited
+	case statusCode >= http.StatusInternalServerError && statusCode <= 599:
+		userStatusCode = http.StatusBadGateway
+		userErrorCode = standardErrorCodeServiceUnavailable
+		userMessage = standardErrorMessageService
+	}
+
+	requestPath, _ := otherMap["request_path"].(string)
+	clear(otherMap)
+	if requestPath != "" {
+		otherMap["request_path"] = requestPath
+	}
+	otherMap["error_type"] = standardErrorType
+	otherMap["error_code"] = userErrorCode
+	otherMap["status_code"] = userStatusCode
+
+	log.Content = userMessage
+	log.ChannelId = 0
+	log.ChannelName = ""
+	log.UpstreamRequestId = ""
+}
+
+func isResourceExhaustedErrorLog(otherMap map[string]interface{}, content string) bool {
+	errorCode, _ := otherMap["error_code"].(string)
+	if errorCode == "insufficient_user_quota" {
+		return true
+	}
+	if errorCode != "pre_consume_token_quota_failed" {
+		return false
+	}
+	content = strings.ToLower(content)
+	return strings.Contains(content, "quota is not enough") ||
+		strings.Contains(content, "quota insufficient")
+}
+
+func formatUserLogs(logs []*Log, startIdx int, role int) {
+	if role >= common.RoleAdminUser {
+		assignDisplayLogIds(logs, startIdx)
+		return
+	}
+
 	for i := range logs {
 		logs[i].ChannelName = ""
 		var otherMap map[string]interface{}
@@ -123,8 +216,14 @@ func formatUserLogs(logs []*Log, startIdx int) {
 			delete(otherMap, "admin_info")
 			// Remove operation-audit details (operator/route info), admin-only.
 			delete(otherMap, "audit_info")
-			// delete(otherMap, "reject_reason")
+			delete(otherMap, "reject_reason")
 			delete(otherMap, "stream_status")
+			if logs[i].Type == LogTypeError {
+				standardizeUserErrorLog(logs[i], otherMap)
+			}
+		} else if logs[i].Type == LogTypeError {
+			otherMap = make(map[string]interface{})
+			standardizeUserErrorLog(logs[i], otherMap)
 		}
 		logs[i].Other = common.MapToJsonStr(otherMap)
 	}
@@ -137,7 +236,7 @@ func GetLogByTokenId(tokenId int) (logs []*Log, err error) {
 		order = clickHouseLogOrder("")
 	}
 	err = LOG_DB.Model(&Log{}).Where("token_id = ?", tokenId).Order(order).Limit(common.MaxRecentItems).Find(&logs).Error
-	formatUserLogs(logs, 0)
+	formatUserLogs(logs, 0, common.RoleCommonUser)
 	return logs, err
 }
 
@@ -561,7 +660,7 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 
 const logSearchCountLimit = 10000
 
-func GetUserLogs(userId int, logType int, startTimestamp int64, endTimestamp int64, modelName string, tokenName string, startIdx int, num int, group string, requestId string, upstreamRequestId string) (logs []*Log, total int64, err error) {
+func GetUserLogs(userId int, role int, logType int, startTimestamp int64, endTimestamp int64, modelName string, tokenName string, startIdx int, num int, group string, requestId string, upstreamRequestId string) (logs []*Log, total int64, err error) {
 	var tx *gorm.DB
 	if logType == LogTypeUnknown {
 		tx = LOG_DB.Where("logs.user_id = ?", userId)
@@ -605,7 +704,7 @@ func GetUserLogs(userId int, logType int, startTimestamp int64, endTimestamp int
 		return nil, 0, errors.New("查询日志失败")
 	}
 
-	formatUserLogs(logs, startIdx)
+	formatUserLogs(logs, startIdx, role)
 	return logs, total, err
 }
 
